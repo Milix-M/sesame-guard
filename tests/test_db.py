@@ -35,13 +35,13 @@ class TestLockState:
     def test_save_and_get(self):
         save_state(True)
         state = get_last_state()
-        assert state["locked"] is True
+        assert state["locked"] == 1
 
     def test_update_state(self):
         save_state(True)
         save_state(False)
         state = get_last_state()
-        assert state["locked"] is False
+        assert state["locked"] == 0
 
 
 class TestEvents:

@@ -130,20 +130,20 @@ class TestCheckAnomaly:
 # ─── Unlock timeout ───
 
 class TestCheckUnlockTimeout:
-    @patch("risk_detector.get_last_unlock_time")
+    @patch("db.get_last_unlock_time")
     def test_locked_safe(self, mock_last):
         """Locked state → no timeout check."""
         risky, reason = check_unlock_timeout(locked=True)
         assert risky is False
 
-    @patch("risk_detector.get_last_unlock_time")
+    @patch("db.get_last_unlock_time")
     def test_unlocked_short_safe(self, mock_last):
         """Unlocked for 30 min → safe (< 120 min threshold)."""
         mock_last.return_value = datetime.now(JST) - timedelta(minutes=30)
         risky, reason = check_unlock_timeout(locked=False)
         assert risky is False
 
-    @patch("risk_detector.get_last_unlock_time")
+    @patch("db.get_last_unlock_time")
     def test_unlocked_long_risky(self, mock_last):
         """Unlocked for 150 min → risky."""
         mock_last.return_value = datetime.now(JST) - timedelta(minutes=150)
@@ -151,7 +151,7 @@ class TestCheckUnlockTimeout:
         assert risky is True
         assert "長時間" in reason
 
-    @patch("risk_detector.get_last_unlock_time")
+    @patch("db.get_last_unlock_time")
     def test_no_history_safe(self, mock_last):
         """No unlock history → safe."""
         mock_last.return_value = None
