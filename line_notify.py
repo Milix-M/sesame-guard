@@ -21,13 +21,26 @@ def send_message(text: str) -> dict:
     return resp.json()
 
 
-def send_risk_alert(unlock_time: str, reason: str, battery: int | None = None) -> dict:
-    """Send a formatted risk alert notification."""
+def send_risk_alert(unlock_time: str, reasons: list[str], battery: int | None = None) -> dict:
+    """Send a formatted risk alert notification with multiple reasons."""
     battery_info = f"\n🔋 バッテリー: {battery}%" if battery is not None else ""
+    reasons_text = "\n".join(f"  ‣ {r}" for r in reasons)
     msg = (
         f"🚨 SESAME セキュリティ警告\n"
         f"解錠検知: {unlock_time}\n"
-        f"理由: {reason}"
+        f"判定理由:\n{reasons_text}"
+        f"{battery_info}"
+    )
+    return send_message(msg)
+
+
+def send_timeout_alert(elapsed_min: int, battery: int | None = None) -> dict:
+    """Send unlock timeout alert."""
+    battery_info = f"\n🔋 バッテリー: {battery}%" if battery is not None else ""
+    msg = (
+        f"⚠️ SESAME 長時間未施錠警告\n"
+        f"解錠から{elapsed_min}分が経過しています\n"
+        f"施錠忘れの可能性があります"
         f"{battery_info}"
     )
     return send_message(msg)
