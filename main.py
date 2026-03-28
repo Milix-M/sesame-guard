@@ -67,7 +67,9 @@ def poll() -> None:
                     log.warning(f"RISKY UNLOCK: {reason}")
                     try:
                         send_risk_alert(
-                            unlock_time=__import__('datetime').datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC"),
+                            unlock_time=__import__('datetime').datetime.now(
+                                __import__('datetime').timezone(__import__('datetime').timedelta(hours=9))
+                            ).strftime("%Y-%m-%d %H:%M:%S JST"),
                             reason=reason,
                             battery=battery,
                         )
