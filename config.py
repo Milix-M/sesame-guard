@@ -4,10 +4,11 @@ from dotenv import load_dotenv
 
 load_dotenv(Path(__file__).parent / ".env")
 
-# SESAME API
-SESAME_API_TOKEN = os.environ.get("SESAME_API_TOKEN", "")
+# SESAME API (SESAME Biz)
+SESAME_API_KEY = os.environ.get("SESAME_API_KEY", "")
+SESAME_SECRET_KEY = os.environ.get("SESAME_SECRET_KEY", "")
 SESAME_DEVICE_ID = os.environ.get("SESAME_DEVICE_ID", "")
-SESAME_API_BASE = "https://api.candyhouse.co/public"
+SESAME_API_BASE = "https://app.candyhouse.co/api/sesame2"
 
 # LINE Messaging API
 LINE_CHANNEL_ACCESS_TOKEN = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "")

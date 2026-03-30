@@ -1,15 +1,21 @@
-"""SESAME Guard - Main polling loop."""
+"""SESAME Guard - Main polling loop (SESAME Biz API)."""
 
 import logging
 import time
 import sys
 from datetime import datetime, timezone, timedelta
 
-from config import SESAME_API_TOKEN, SESAME_DEVICE_ID, POLL_INTERVAL_SEC
-from sesame_client import get_sesame_status, get_sesames
+from config import (
+    SESAME_API_KEY, SESAME_SECRET_KEY, SESAME_DEVICE_ID,
+    POLL_INTERVAL_SEC, RISK_UNLOCK_TIMEOUT_MIN,
+)
+from sesame_client import SesameBizClient
 from line_notify import send_risk_alert, send_timeout_alert
 from risk_detector import evaluate_risk, check_unlock_timeout
-from db import init_db, get_last_state, save_state, save_event, save_alert, get_last_unlock_time
+from db import (
+    init_db, get_last_state, save_state, save_event, save_alert,
+    get_last_unlock_time, get_last_history_timestamp,
+)
 
 JST = timezone(timedelta(hours=9))
 
@@ -23,74 +29,91 @@ log = logging.getLogger(__name__)
 _last_timeout_alert_min = 0
 
 
-def find_device_id(token: str) -> str | None:
-    """Auto-detect device ID if not configured."""
+def create_client() -> SesameBizClient:
+    if not SESAME_API_KEY:
+        log.error("SESAME_API_KEY not set")
+        sys.exit(1)
+    if not SESAME_DEVICE_ID:
+        log.error("SESAME_DEVICE_ID not set")
+        sys.exit(1)
+
+    return SesameBizClient(
+        api_key=SESAME_API_KEY,
+        secret_key=SESAME_SECRET_KEY,
+    )
+
+
+def check_new_unlocks(client: SesameBizClient) -> list[dict]:
+    """Fetch unlock events since last check using history API."""
+    last_ts = get_last_history_timestamp()
+    if last_ts is None:
+        # First run: just record current timestamp, don't alert for old events
+        now = datetime.now().timestamp()
+        save_event("init", True, None, False, None)
+        return []
+
     try:
-        devices = get_sesames(token)
-        if devices:
-            return devices[0]["device_id"]
-    except Exception:
-        pass
-    return None
+        return client.get_unlock_history(SESAME_DEVICE_ID, since_timestamp=last_ts)
+    except Exception as e:
+        log.error(f"History fetch error: {e}")
+        return []
 
 
 def poll() -> None:
     global _last_timeout_alert_min
 
-    token = SESAME_API_TOKEN
-    device_id = SESAME_DEVICE_ID
-
-    if not token:
-        log.error("SESAME_API_TOKEN not set")
-        sys.exit(1)
-
-    if not device_id:
-        log.info("SESAME_DEVICE_ID not set, auto-detecting...")
-        device_id = find_device_id(token)
-        if not device_id:
-            log.error("No SESAME device found")
-            sys.exit(1)
-        log.info(f"Found device: {device_id}")
-
+    client = create_client()
     init_db()
 
-    log.info("SESAME Guard started")
+    log.info(f"SESAME Guard started (device: {SESAME_DEVICE_ID[:8]}...)")
 
     while True:
         try:
-            status = get_sesame_status(token, device_id)
-            locked = status["locked"]
-            battery = status.get("battery")
+            # 1. Check for new unlock events via history API
+            new_unlocks = check_new_unlocks(client)
+            for unlock in new_unlocks:
+                ts = unlock.get("timeStamp", 0)
+                dt = datetime.fromtimestamp(ts, tz=JST)
+                tag = unlock.get("historyTag")
 
-            prev = get_last_state()
-
-            # Detect state change: locked → unlocked
-            if prev is not None and prev["locked"] and not locked:
-                log.info(f"Unlock detected at {datetime.now(JST).isoformat()}")
+                log.info(f"Unlock detected from history: {dt.isoformat()}")
 
                 is_risky, reasons = evaluate_risk()
-                save_event("unlock", locked, battery, is_risky, " | ".join(reasons) if reasons else None)
+                tag_info = f" ({tag})" if tag else ""
+                save_event(
+                    "unlock", False, None,
+                    is_risky,
+                    " | ".join(reasons) if reasons else None,
+                )
 
                 if is_risky and reasons:
                     log.warning(f"RISKY UNLOCK: {reasons}")
                     try:
                         send_risk_alert(
-                            unlock_time=datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S JST"),
+                            unlock_time=dt.strftime("%Y-%m-%d %H:%M:%S JST"),
                             reasons=reasons,
-                            battery=battery,
+                            battery=None,
                         )
                         save_alert(reasons)
                     except Exception as e:
                         log.error(f"LINE notification failed: {e}")
 
-            # Check unlock timeout (runs every poll when unlocked)
+                # Update last seen timestamp
+                from db import set_last_history_timestamp
+                set_last_history_timestamp(ts)
+
+            # 2. Also poll current status for timeout detection
+            status = client.get_status(SESAME_DEVICE_ID)
+            locked = status["locked"]
+            battery = status["battery"]
+
+            # Check unlock timeout
             if not locked:
                 timeout_risky, timeout_reason = check_unlock_timeout(locked)
                 if timeout_risky and timeout_reason:
                     last_unlock = get_last_unlock_time()
                     elapsed = int((datetime.now(JST) - last_unlock).total_seconds() / 60) if last_unlock else 0
 
-                    # Only alert once per timeout cycle (reset when locked again)
                     if elapsed > _last_timeout_alert_min:
                         log.warning(f"UNLOCK TIMEOUT: {timeout_reason}")
                         _last_timeout_alert_min = elapsed
@@ -102,10 +125,10 @@ def poll() -> None:
             if locked:
                 _last_timeout_alert_min = 0
 
-            # Save state changes
+            # Save state
+            prev = get_last_state()
             if prev is None or prev["locked"] != locked:
                 save_event("status_change", locked, battery, False, None)
-
             save_state(locked)
 
         except Exception as e:

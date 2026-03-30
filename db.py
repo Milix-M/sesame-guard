@@ -41,6 +41,11 @@ def init_db() -> None:
             created_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS app_state (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_events_created ON events(created_at);
         CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type);
         CREATE INDEX IF NOT EXISTS idx_events_risky ON events(is_risky);
@@ -134,6 +139,32 @@ def get_last_unlock_time() -> datetime | None:
         return datetime.fromisoformat(row["created_at_jst"])
     except ValueError:
         return None
+
+
+def get_last_history_timestamp() -> float | None:
+    val = _get_app_state("last_history_ts")
+    return float(val) if val else None
+
+
+def set_last_history_timestamp(ts: float) -> None:
+    _set_app_state("last_history_ts", str(ts))
+
+
+def _get_app_state(key: str) -> str | None:
+    conn = get_conn()
+    row = conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+    conn.close()
+    return row["value"] if row else None
+
+
+def _set_app_state(key: str, value: str) -> None:
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO app_state (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
+    )
+    conn.commit()
+    conn.close()
 
 
 def get_last_alert_time() -> datetime | None:

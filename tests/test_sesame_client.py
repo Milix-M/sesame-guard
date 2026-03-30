@@ -1,57 +1,104 @@
-"""Tests for sesame_client module."""
+"""Tests for sesame_client module (SESAME Biz API)."""
 
 from unittest.mock import patch, MagicMock
 
 import pytest
 
-from sesame_client import get_sesames, get_sesame_status
+from sesame_client import SesameBizClient
 
 
-class TestGetSesames:
+@pytest.fixture
+def client():
+    return SesameBizClient(api_key="test_key", secret_key="aabbccdd")
+
+
+class TestSesameBizClient:
+    def test_init(self, client):
+        assert client.api_key == "test_key"
+        assert client.secret_key == "aabbccdd"
+        assert client._headers["x-api-key"] == "test_key"
+
+    def test_get_sesames_raises(self, client):
+        with pytest.raises(NotImplementedError):
+            client.get_sesames()
+
     @patch("sesame_client.requests.get")
-    def test_returns_device_list(self, mock_get):
+    def test_get_status_locked(self, mock_get, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "batteryPercentage": 85,
+            "batteryVoltage": 5.8,
+            "position": 11,
+            "CHSesame2Status": "locked",
+            "timestamp": 1598523693,
+        }
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        result = client.get_status("device-123")
+        assert result["locked"] is True
+        assert result["battery"] == 85
+        assert result["status_raw"] == "locked"
+
+    @patch("sesame_client.requests.get")
+    def test_get_status_unlocked(self, mock_get, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {
+            "batteryPercentage": 50,
+            "batteryVoltage": 5.5,
+            "position": 256,
+            "CHSesame2Status": "unlocked",
+            "timestamp": 1598523700,
+        }
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        result = client.get_status("device-123")
+        assert result["locked"] is False
+        assert result["battery"] == 50
+
+    @patch("sesame_client.requests.get")
+    def test_get_history(self, mock_get, client):
         mock_resp = MagicMock()
         mock_resp.json.return_value = [
-            {"device_id": "abc-123", "serial": "S1", "nickname": "Front door"}
+            {"type": 2, "timeStamp": 1597492862.0, "historyTag": "test", "recordID": 255, "parameter": None},
+            {"type": 11, "timeStamp": 1597492864.0, "historyTag": None, "recordID": 256, "parameter": None},
         ]
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        result = get_sesames("test_token")
+        result = client.get_history("device-123", page=0, limit=50)
+        assert len(result) == 2
+        assert result[0]["type"] == 2
+
+    @patch("sesame_client.requests.get")
+    def test_get_unlock_history(self, mock_get, client):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [
+            {"type": 2, "timeStamp": 1597492900.0, "historyTag": "key1", "recordID": 300, "parameter": None},
+            {"type": 11, "timeStamp": 1597492890.0, "historyTag": None, "recordID": 299, "parameter": None},
+            {"type": 2, "timeStamp": 1597492862.0, "historyTag": "key2", "recordID": 255, "parameter": None},
+        ]
+        mock_resp.raise_for_status = MagicMock()
+        mock_get.return_value = mock_resp
+
+        result = client.get_unlock_history("device-123", since_timestamp=1597492870.0)
+        # Only type=2 (unlock) and after timestamp
         assert len(result) == 1
-        assert result[0]["nickname"] == "Front door"
-        mock_get.assert_called_once()
+        assert result[0]["historyTag"] == "key1"
+
+    def test_send_command_no_secret_key(self):
+        client_no_secret = SesameBizClient(api_key="test")
+        with pytest.raises(ValueError, match="secret_key"):
+            client_no_secret.send_command("device-123")
 
     @patch("sesame_client.requests.get")
-    def test_passes_auth_header(self, mock_get):
+    def test_auth_header(self, mock_get, client):
         mock_resp = MagicMock()
-        mock_resp.json.return_value = []
+        mock_resp.json.return_value = {"CHSesame2Status": "locked", "batteryPercentage": 100, "batteryVoltage": 5.8, "position": 11, "timestamp": 0}
         mock_resp.raise_for_status = MagicMock()
         mock_get.return_value = mock_resp
 
-        get_sesames("my_token_123")
+        client.get_status("device-123")
         call_kwargs = mock_get.call_args
-        assert call_kwargs.kwargs["headers"]["Authorization"] == "my_token_123"
-
-
-class TestGetSesameStatus:
-    @patch("sesame_client.requests.get")
-    def test_returns_status(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"locked": True, "battery": 85, "responsive": True}
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
-
-        result = get_sesame_status("token", "device-123")
-        assert result["locked"] is True
-        assert result["battery"] == 85
-
-    @patch("sesame_client.requests.get")
-    def test_unlocked_status(self, mock_get):
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {"locked": False, "battery": 50, "responsive": True}
-        mock_resp.raise_for_status = MagicMock()
-        mock_get.return_value = mock_resp
-
-        result = get_sesame_status("token", "device-123")
-        assert result["locked"] is False
+        assert call_kwargs.kwargs["headers"]["x-api-key"] == "test_key"
